@@ -1,3 +1,4 @@
+Run 1: Initial Testing
 Epoch 1, Train Loss: 23.5200, Train Acc: 0.7913, Val Acc: 0.8500, Precision: 0.9487, Recall: 0.7400, F1: 0.8315
 Epoch 2, Train Loss: 8.0629, Train Acc: 0.9450, Val Acc: 0.8750, Precision: 0.9870, Recall: 0.7600, F1: 0.8588
 Epoch 3, Train Loss: 2.9121, Train Acc: 0.9825, Val Acc: 0.9000, Precision: 0.8704, Recall: 0.9400, F1: 0.9038
@@ -8,7 +9,7 @@ Epoch 7, Train Loss: 0.0682, Train Acc: 1.0000, Val Acc: 0.9150, Precision: 0.90
 Epoch 8, Train Loss: 0.0431, Train Acc: 1.0000, Val Acc: 0.9150, Precision: 0.9109, Recall: 0.9200, F1: 0.9154
 Epoch 9, Train Loss: 0.0313, Train Acc: 1.0000, Val Acc: 0.9100, Precision: 0.9020, Recall: 0.9200, F1: 0.9109
 Epoch 10, Train Loss: 0.0253, Train Acc: 1.0000, Val Acc: 0.9150, Precision: 0.9109, Recall: 0.9200, F1: 0.9154
-
+Run 2: Repetition
 Epoch 1, Train Loss: 22.1103, Train Acc: 0.7875, Val Acc: 0.8850, Precision: 0.8468, Recall: 0.9400, F1: 0.8910
 Epoch 2, Train Loss: 7.2477, Train Acc: 0.9475, Val Acc: 0.9300, Precision: 0.9300, Recall: 0.9300, F1: 0.9300
 Epoch 3, Train Loss: 1.6953, Train Acc: 0.9862, Val Acc: 0.9150, Precision: 0.8739, Recall: 0.9700, F1: 0.9194
@@ -19,3 +20,30 @@ Epoch 7, Train Loss: 0.0424, Train Acc: 1.0000, Val Acc: 0.9300, Precision: 0.93
 Epoch 8, Train Loss: 0.0226, Train Acc: 1.0000, Val Acc: 0.9300, Precision: 0.9388, Recall: 0.9200, F1: 0.9293
 Epoch 9, Train Loss: 0.0172, Train Acc: 1.0000, Val Acc: 0.9300, Precision: 0.9388, Recall: 0.9200, F1: 0.9293
 Epoch 10, Train Loss: 0.0141, Train Acc: 1.0000, Val Acc: 0.9300, Precision: 0.9388, Recall: 0.9200, F1: 0.9293
+Run 3: More Data
+Epoch 1, Train Loss: 57.9573, Train Acc: 0.9281, Val Acc: 0.9550, Precision: 0.9361, Recall: 0.9767, F1: 0.9560
+Epoch 2, Train Loss: 14.1701, Train Acc: 0.9856, Val Acc: 0.9533, Precision: 0.9459, Recall: 0.9617, F1: 0.9537
+Epoch 3, Train Loss: 10.0634, Train Acc: 0.9896, Val Acc: 0.9583, Precision: 0.9614, Recall: 0.9550, F1: 0.9582
+Epoch 4, Train Loss: 3.4079, Train Acc: 0.9965, Val Acc: 0.9542, Precision: 0.9674, Recall: 0.9400, F1: 0.9535
+Epoch 5, Train Loss: 3.7389, Train Acc: 0.9946, Val Acc: 0.9592, Precision: 0.9693, Recall: 0.9483, F1: 0.9587
+Epoch 6, Train Loss: 3.8127, Train Acc: 0.9973, Val Acc: 0.9558, Precision: 0.9418, Recall: 0.9717, F1: 0.9565
+Epoch 7, Train Loss: 3.4254, Train Acc: 0.9971, Val Acc: 0.9600, Precision: 0.9646, Recall: 0.9550, F1: 0.9598
+Epoch 8, Train Loss: 4.1092, Train Acc: 0.9969, Val Acc: 0.9392, Precision: 0.8998, Recall: 0.9883, F1: 0.9420
+Epoch 9, Train Loss: 5.2434, Train Acc: 0.9952, Val Acc: 0.9633, Precision: 0.9760, Recall: 0.9500, F1: 0.9628
+Epoch 10, Train Loss: 3.0093, Train Acc: 0.9967, Val Acc: 0.9533, Precision: 0.9373, Recall: 0.9717, F1: 0.9542
+Run 4: 15 Epochs Instead of 10
+Epoch 1, Train Loss: 57.5219, Train Acc: 0.9287, Val Acc: 0.9442, Precision: 0.9171, Recall: 0.9767, F1: 0.9459
+Epoch 2, Train Loss: 18.2106, Train Acc: 0.9810, Val Acc: 0.9608, Precision: 0.9631, Recall: 0.9583, F1: 0.9607
+Epoch 3, Train Loss: 8.0123, Train Acc: 0.9921, Val Acc: 0.9575, Precision: 0.9449, Recall: 0.9717, F1: 0.9581
+Epoch 4, Train Loss: 9.0457, Train Acc: 0.9912, Val Acc: 0.9558, Precision: 0.9757, Recall: 0.9350, F1: 0.9549
+Epoch 5, Train Loss: 4.8853, Train Acc: 0.9956, Val Acc: 0.9475, Precision: 0.9163, Recall: 0.9850, F1: 0.9494
+Epoch 6, Train Loss: 3.6596, Train Acc: 0.9962, Val Acc: 0.9625, Precision: 0.9512, Recall: 0.9750, F1: 0.9630
+Epoch 7, Train Loss: 3.7514, Train Acc: 0.9958, Val Acc: 0.9617, Precision: 0.9663, Recall: 0.9567, F1: 0.9615
+Epoch 8, Train Loss: 3.5411, Train Acc: 0.9952, Val Acc: 0.9600, Precision: 0.9662, Recall: 0.9533, F1: 0.9597
+Epoch 9, Train Loss: 4.2515, Train Acc: 0.9971, Val Acc: 0.9542, Precision: 0.9489, Recall: 0.9600, F1: 0.9544
+Epoch 10, Train Loss: 5.7645, Train Acc: 0.9946, Val Acc: 0.9558, Precision: 0.9691, Recall: 0.9417, F1: 0.9552
+Epoch 11, Train Loss: 1.7195, Train Acc: 0.9990, Val Acc: 0.9583, Precision: 0.9464, Recall: 0.9717, F1: 0.9589
+Epoch 12, Train Loss: 3.0920, Train Acc: 0.9973, Val Acc: 0.9533, Precision: 0.9595, Recall: 0.9467, F1: 0.9530
+Epoch 13, Train Loss: 4.4486, Train Acc: 0.9960, Val Acc: 0.9567, Precision: 0.9536, Recall: 0.9600, F1: 0.9568
+Epoch 14, Train Loss: 4.0682, Train Acc: 0.9967, Val Acc: 0.9625, Precision: 0.9727, Recall: 0.9517, F1: 0.9621
+Epoch 15, Train Loss: 0.9577, Train Acc: 0.9994, Val Acc: 0.9608, Precision: 0.9601, Recall: 0.9617, F1: 0.9609

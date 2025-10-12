@@ -8,13 +8,25 @@ from tqdm import tqdm
 import pandas as pd
 
 
-epochs = 10
+epochs = 15
 
 # Load and preprocess data
 df = pd.read_csv("data.csv")
-df.dropna(inplace=True)
+df.dropna(subset=['text', 'is_toxic'], inplace=True)
 df['text'] = df['text'].astype(str)
-df['label'] = df['is_toxic'].map({'Not Toxic': 0, 'Toxic': 1})
+
+# Normalize labels
+def normalize_label(label):
+    label = str(label).strip().lower()
+    return 1 if label in ['toxic', '1'] else 0
+
+df['label'] = df['is_toxic'].apply(normalize_label)
+
+# Confirm label distribution
+print("Label distribution:\n", df['label'].value_counts())
+
+# Final check for NaNs
+assert df['label'].isna().sum() == 0, "NaNs found in label column after normalization!"
 
 # Split data
 train_texts, val_texts, train_labels, val_labels = train_test_split(
