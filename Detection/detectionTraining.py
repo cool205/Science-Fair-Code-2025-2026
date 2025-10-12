@@ -130,4 +130,4 @@ print(f"Validation Accuracy: {accuracy:.2%}")
 print(f"Precision: {precision:.2%}, Recall: {recall:.2%}, F1 Score: {f1:.2%}")
 
 # Save model
-torch.save(model.state_dict(), "bert_toxic_model.pt")
+torch.save(model.state_dict(), "toxicClassifier.pt")
