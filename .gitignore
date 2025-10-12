@@ -1,2 +1,2 @@
 wandb/
-bert_toxic_model.pt/
+toxicClassifier.pt
