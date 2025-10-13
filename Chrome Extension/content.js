@@ -1,4 +1,3 @@
-// Content script: observe DOM mutations and capture text from known social selectors.
 (function () {
   const SELECTORS = [
     // Twitter
@@ -19,25 +18,25 @@
 
   const TEXT_KEY = 'capturedSocialText_v1';
 
-  // Lightweight in-browser toxicity detector (keyword-based fallback)
-  // Note: the project's toxicClassifier.pt (PyTorch) cannot run in the browser.
-  // This simple heuristic is used until the model is hosted or converted.
+  // Toxic keywords list
   const TOXIC_KEYWORDS = [
     'kill', 'die', 'stupid', 'idiot', 'hate', 'bitch', 'asshole', "you're an idiot",
     'trash', 'worthless', 'faggot', 'nigger'
   ];
 
+  // Check if text contains toxic keywords with word boundaries
   function isTextToxic(text) {
     if (!text) return false;
     const t = text.toLowerCase();
-    // word-based check to avoid partial matches
     for (const kw of TOXIC_KEYWORDS) {
-      // simple contains; could be improved with word boundaries
-      if (t.indexOf(kw) !== -1) return true;
+      // Escape keyword for regex and use word boundaries for exact word match
+      const re = new RegExp(`\\b${kw.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+      if (re.test(t)) return true;
     }
     return false;
   }
 
+  // Safely get text from a DOM node
   function getTextFromNode(node) {
     try {
       return node.innerText || node.textContent || '';
@@ -46,11 +45,11 @@
     }
   }
 
+  // Store new texts in chrome storage, avoiding duplicates
   function storeTexts(newTexts) {
     if (!newTexts || newTexts.length === 0) return;
     chrome.storage.local.get([TEXT_KEY], (res) => {
       const existing = Array.isArray(res[TEXT_KEY]) ? res[TEXT_KEY] : [];
-      // store objects { text, toxic }
       const map = new Map();
       for (const e of existing) {
         if (typeof e === 'string') map.set(e, { text: e, toxic: isTextToxic(e) });
@@ -72,129 +71,85 @@
     });
   }
 
-  // Debounce and batching for mutation observer to avoid repeated heavy scans
-  const _pendingRoots = new Set();
-  let _scanTimer = null;
-
-  function scheduleScan(root) {
-    if (root) _pendingRoots.add(root === document ? document.body : root);
-    if (_scanTimer) clearTimeout(_scanTimer);
-    _scanTimer = setTimeout(() => {
-      const roots = Array.from(_pendingRoots);
-      _pendingRoots.clear();
-      for (const r of roots) {
-        try {
-          scanAndStore(r);
-        } catch (e) {
-          // continue with other roots
-        }
+  // Highlight node if text is toxic
+  function highlightIfToxic(node, text) {
+    try {
+      if (isTextToxic(text)) {
+        node.style.transition = 'background-color 0.2s ease, color 0.2s ease';
+        node.style.backgroundColor = 'rgba(255,0,0,0.12)';
+        node.style.color = '#800';
+        node.setAttribute('data-toxic-highlight', 'true');
       }
-    }, 300); // batch mutations for 300ms
+    } catch (e) {
+      // Ignore styling errors
+    }
   }
 
-  function scanAndStore(root = document.body) {
-    const found = [];
+  // IntersectionObserver callback: process elements when they come into view
+  function onIntersect(entries, observer) {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        const node = entry.target;
+        const text = getTextFromNode(node);
+        if (text) {
+          storeTexts([text]);
+          highlightIfToxic(node, text);
+          // Stop observing to save resources
+          observer.unobserve(node);
+        }
+      }
+    }
+  }
+
+  // Create IntersectionObserver with threshold 0.1 (10%)
+  const observer = new IntersectionObserver(onIntersect, {
+    root: null, // viewport
+    rootMargin: '0px',
+    threshold: 0.1
+  });
+
+  // Find elements matching selectors and start observing them
+  function observeMatchingElements(root = document) {
     for (const sel of SELECTORS) {
       try {
         const nodes = root.querySelectorAll(sel);
         nodes.forEach((n) => {
-          const t = getTextFromNode(n);
-          if (t) {
-            found.push(t);
-            // highlight in-place if toxic
-            try {
-              if (isTextToxic(t)) {
-                // add a red background / border to make it visible
-                n.style.transition = 'background-color 0.2s ease, color 0.2s ease';
-                n.style.backgroundColor = 'rgba(255,0,0,0.12)';
-                n.style.color = '#800';
-                // add a data attribute to mark it
-                n.setAttribute('data-toxic-highlight', 'true');
-              }
-            } catch (e) {
-              // ignore styling errors
-            }
-          }
+          observer.observe(n);
         });
       } catch (e) {
-        // invalid selector on some pages; ignore
+        // Invalid selector on some pages, ignore
       }
     }
-    // If selectors didn't find much, use a bounded element-based fallback
-    // This is much cheaper than walking every text node and prevents freezing on large pages.
-    const MIN_LEN = 25; // minimum characters to consider
-    const MAX_LEN = 1500; // maximum characters to capture from a single element
-    const MAX_ELEMENTS = 300; // cap number of elements to inspect
-
-    if (found.length < 3) {
-      try {
-        const containerSelectors = 'p, div, span, article, li, blockquote, h1, h2, h3, h4';
-        const elems = root.querySelectorAll(containerSelectors);
-        let inspected = 0;
-        for (let i = 0; i < elems.length && inspected < MAX_ELEMENTS; i++) {
-          const el = elems[i];
-          if (!el || !el.textContent) continue;
-          // skip elements that are clearly non-visible
-          try {
-            if (el.closest && el.closest('script, style, head, noscript, template')) continue;
-          } catch (e) {
-            // ignore
-          }
-          const rects = el.getClientRects();
-          if (!rects || rects.length === 0) continue; // not visible
-          const txt = el.innerText ? el.innerText.trim() : el.textContent.trim();
-          if (!txt) continue;
-          if (txt.length < MIN_LEN || txt.length > MAX_LEN) continue;
-          found.push(txt);
-          inspected++;
-          // attempt to highlight if toxic
-          try {
-            if (isTextToxic(txt)) {
-              el.style.transition = 'background-color 0.2s ease, color 0.2s ease';
-              el.style.backgroundColor = 'rgba(255,0,0,0.12)';
-              el.style.color = '#800';
-              el.setAttribute('data-toxic-highlight', 'true');
-            }
-          } catch (e) {
-            // ignore styling errors
-          }
-        }
-      } catch (e) {
-        // ignore fallback scan errors
-      }
-    }
-
-    if (found.length) storeTexts(found);
   }
 
-  // Observe the document for added nodes/text changes
-  const observer = new MutationObserver((mutations) => {
+  // Initial scan on page load
+  window.addEventListener('load', () => {
+    setTimeout(() => observeMatchingElements(document), 800);
+  });
+
+  // Also run shortly after script injection for SPA or fast-loading pages
+  setTimeout(() => observeMatchingElements(document), 400);
+
+  // MutationObserver to detect new elements added dynamically and observe them
+  const mutationObserver = new MutationObserver((mutations) => {
     for (const m of mutations) {
       if (m.addedNodes && m.addedNodes.length) {
-        m.addedNodes.forEach((n) => {
-          if (n.nodeType === Node.ELEMENT_NODE) scheduleScan(n);
+        m.addedNodes.forEach((node) => {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            // Observe new matching elements inside added node subtree
+            observeMatchingElements(node);
+          }
         });
       }
-      // attribute or characterData changes might affect text nodes
-      if (m.target && m.target.nodeType === Node.ELEMENT_NODE) scheduleScan(m.target);
     }
-    // always include document body in case of large changes
-    scheduleScan(document.body);
   });
 
   try {
-    observer.observe(document.documentElement || document, {
+    mutationObserver.observe(document.documentElement || document, {
       childList: true,
       subtree: true,
-      characterData: true,
-      attributes: true
     });
   } catch (e) {
-    // some pages may restrict script access
+    // Some pages may restrict script access
   }
-
-  // Initial scan after a short delay to allow some dynamic content to render
-  window.addEventListener('load', () => setTimeout(() => scheduleScan(document), 800));
-  // also run immediately
-  setTimeout(() => scheduleScan(document), 400);
 })();
