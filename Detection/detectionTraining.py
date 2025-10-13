@@ -1,97 +1,145 @@
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-import wandb #Weights and Biases
-import pandas as pd
-from nltk.tokenize import word_tokenize
+from torch.utils.data import DataLoader, Dataset
+from transformers import BertTokenizer, BertForSequenceClassification
+from torch.optim import AdamW
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from collections import Counter
+from sklearn.metrics import precision_score, recall_score, f1_score
+from tqdm import tqdm
+import pandas as pd
 
-wandb.init(project="sentiment-classifier", name="lstm-run")
 
-df = pd.read_csv("sentiment_dataset.csv")
-df.dropna(inplace=True)
-label_encoder = LabelEncoder()
-df['label'] = label_encoder.fit_transform(df['label'])
+epochs = 15
 
-tokenized = df['text'].apply(word_tokenize)
-vocab = Counter([word for sentence in tokenized for word in sentence])
-word2idx = {word: idx + 2 for idx, (word, _) in enumerate(vocab.items())}
-word2idx["<PAD>"] = 0
-word2idx["<UNK>"] = 1
+# Load and preprocess data
+df = pd.read_csv("data.csv")
+df.dropna(subset=['text', 'is_toxic'], inplace=True)
+df['text'] = df['text'].astype(str)
 
-def encode_sentence(sentence, max_len=50):
-    tokens = word_tokenize(sentence)
-    ids = [word2idx.get(token, word2idx["<UNK>"]) for token in tokens]
-    return ids[:max_len] + [word2idx["<PAD>"]] * (max_len - len(ids))
+# Normalize labels
+def normalize_label(label):
+    label = str(label).strip().lower()
+    return 1 if label in ['toxic', '1'] else 0
 
-class SentimentDataset(Dataset):
-    def __init__(self, texts, labels):
-        self.texts = [encode_sentence(text) for text in texts]
+df['label'] = df['is_toxic'].apply(normalize_label)
+
+# Confirm label distribution
+print("Label distribution:\n", df['label'].value_counts())
+
+# Final check for NaNs
+assert df['label'].isna().sum() == 0, "NaNs found in label column after normalization!"
+
+# Split data
+train_texts, val_texts, train_labels, val_labels = train_test_split(
+    df['text'].tolist(), df['label'].tolist(), test_size=0.2, stratify=df['label']
+)
+
+# Tokenization
+tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+train_encodings = tokenizer(train_texts, truncation=True, padding=True, max_length=128)
+val_encodings = tokenizer(val_texts, truncation=True, padding=True, max_length=128)
+
+# Dataset class
+class ToxicDataset(Dataset):
+    def __init__(self, encodings, labels):
+        self.encodings = encodings
         self.labels = labels
-
+    def __getitem__(self, idx):
+        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+        item['labels'] = torch.tensor(self.labels[idx])
+        return item
     def __len__(self):
         return len(self.labels)
 
-    def __getitem__(self, idx):
-        return torch.tensor(self.texts[idx]), torch.tensor(self.labels[idx])
+train_dataset = ToxicDataset(train_encodings, train_labels)
+val_dataset = ToxicDataset(val_encodings, val_labels)
 
-X_train, X_val, y_train, y_val = train_test_split(df['text'], df['label'], test_size=0.2)
-train_dataset = SentimentDataset(X_train, y_train.values)
-val_dataset = SentimentDataset(X_val, y_val.values)
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=32)
+# Model setup
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = BertForSequenceClassification.from_pretrained("bert-base-uncased", num_labels=2)
+model.to(device)
 
-class SentimentClassifier(nn.Module):
-    def __init__(self, vocab_size, embed_dim, hidden_dim, output_dim):
-        super().__init__()
-        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=word2idx["<PAD>"])
-        self.lstm = nn.LSTM(embed_dim, hidden_dim, batch_first=True)
-        self.fc = nn.Linear(hidden_dim, output_dim)
+train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=16)
+optimizer = AdamW(model.parameters(), lr=5e-5)
 
-    def forward(self, x):
-        embedded = self.embedding(x)
-        _, (hidden, _) = self.lstm(embedded)
-        return self.fc(hidden[-1])
-
-model = SentimentClassifier(vocab_size=len(word2idx), embed_dim=128, hidden_dim=64, output_dim=3)
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
-
-for epoch in range(5):
-    model.train()
+model.train()
+for epoch in range(epochs):
     total_loss = 0
     correct = 0
     total = 0
-
-    for inputs, labels in train_loader:
+    loop = tqdm(train_loader, desc=f"Epoch {epoch+1}")
+    
+    for batch in loop:
         optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = criterion(outputs, labels)
+        input_ids = batch['input_ids'].to(device)
+        attention_mask = batch['attention_mask'].to(device)
+        labels = batch['labels'].to(device)
+        outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+        loss = outputs.loss
         loss.backward()
         optimizer.step()
 
         total_loss += loss.item()
-        preds = torch.argmax(outputs, dim=1)
+        preds = torch.argmax(outputs.logits, dim=1)
         correct += (preds == labels).sum().item()
         total += labels.size(0)
+        loop.set_postfix(loss=loss.item(), accuracy=correct/total)
 
-    accuracy = correct / total
-    print(f"Epoch {epoch+1}, Loss: {total_loss:.4f}, Accuracy: {accuracy:.2%}")
+    # Calculate epoch metrics
+    epoch_loss = total_loss
+    epoch_accuracy = correct / total
 
-    wandb.log({"epoch": epoch + 1, "loss": total_loss, "accuracy": accuracy})
+    # Evaluate on validation set
+    model.eval()
+    all_preds = []
+    all_labels = []
+    with torch.no_grad():
+        for batch in val_loader:
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            labels = batch['labels'].to(device)
+            outputs = model(input_ids, attention_mask=attention_mask)
+            preds = torch.argmax(outputs.logits, dim=1)
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+    model.train()
 
+    precision = precision_score(all_labels, all_preds)
+    recall = recall_score(all_labels, all_preds)
+    f1 = f1_score(all_labels, all_preds)
+    val_accuracy = sum([p == l for p, l in zip(all_preds, all_labels)]) / len(all_labels)
+
+    # Print summary
+    print(f"Epoch {epoch+1} Summary — Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.2%}")
+    print(f"Validation Accuracy: {val_accuracy:.2%}, Precision: {precision:.2%}, Recall: {recall:.2%}, F1 Score: {f1:.2%}")
+
+    # Append to storage.txt
+    with open("storage.txt", "a") as f:
+        f.write(f"Epoch {epoch+1}, Train Loss: {epoch_loss:.4f}, Train Acc: {epoch_accuracy:.4f}, "
+                f"Val Acc: {val_accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}\n")
+
+# Evaluation loop with tqdm
 model.eval()
-correct = 0
-total = 0
+all_preds = []
+all_labels = []
+loop = tqdm(val_loader, desc="Evaluating")
 with torch.no_grad():
-    for inputs, labels in val_loader:
-        outputs = model(inputs)
-        preds = torch.argmax(outputs, dim=1)
-        correct += (preds == labels).sum().item()
-        total += labels.size(0)
-print(f"Validation Accuracy: {correct / total:.2%}")
+    for batch in loop:
+        input_ids = batch['input_ids'].to(device)
+        attention_mask = batch['attention_mask'].to(device)
+        labels = batch['labels'].to(device)
+        outputs = model(input_ids, attention_mask=attention_mask)
+        preds = torch.argmax(outputs.logits, dim=1)
+        all_preds.extend(preds.cpu().numpy())
+        all_labels.extend(labels.cpu().numpy())
 
-torch.save(model.state_dict(), "sentiment_model.pt")
+precision = precision_score(all_labels, all_preds)
+recall = recall_score(all_labels, all_preds)
+f1 = f1_score(all_labels, all_preds)
+accuracy = sum([p == l for p, l in zip(all_preds, all_labels)]) / len(all_labels)
+
+print(f"Validation Accuracy: {accuracy:.2%}")
+print(f"Precision: {precision:.2%}, Recall: {recall:.2%}, F1 Score: {f1:.2%}")
+
+# Save model
+torch.save(model.state_dict(), "toxicClassifier.pt")

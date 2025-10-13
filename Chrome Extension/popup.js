@@ -7,10 +7,24 @@ function renderList(items) {
     list.textContent = '(no captured texts yet)';
     return;
   }
-  items.forEach((t) => {
+  items.forEach((it) => {
+    // items may be string (old) or object { text, toxic }
+    const text = typeof it === 'string' ? it : it.text || '';
+    const toxic = typeof it === 'object' && it.toxic === true;
     const d = document.createElement('div');
     d.className = 'item';
-    d.textContent = t;
+    d.textContent = text;
+    if (toxic) {
+      d.style.backgroundColor = 'rgba(255,0,0,0.08)';
+      d.style.color = '#800';
+      // add a small badge
+      const badge = document.createElement('span');
+      badge.textContent = ' TOXIC';
+      badge.style.fontWeight = '600';
+      badge.style.marginLeft = '8px';
+      badge.style.color = '#900';
+      d.appendChild(badge);
+    }
     list.appendChild(d);
   });
 }

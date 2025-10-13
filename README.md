@@ -4,4 +4,6 @@ AI-Driven Chrome Extension for Real-Time Sentiment Reframing in Negative Digital
 
 Parental Control Extension
 
-Git Check with Main
+Thanks to these datasets:
+https://github.com/surge-ai/toxicity
+https://huggingface.co/datasets/textdetox/multilingual_toxicity_dataset
