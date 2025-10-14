@@ -1,10 +1,10 @@
 (function () {
-  const TEXT_KEY = 'capturedAllText_v1';
+  const TEXT_KEY = 'capturedText_v2';
+  const PERSPECTIVE_API_KEY = 'YOUR_API_KEY_HERE'; // Replace this with your key
 
-  const TOXIC_KEYWORDS = [
-    'kill', 'die', 'stupid', 'idiot', 'hate', 'bitch', 'asshole',
-    "you're an idiot", 'trash', 'worthless', 'faggot', 'nigger'
-  ];
+  // Debounce settings for DOM changes
+  let mutationTimeout = null;
+  const DEBOUNCE_TIME = 1000;
 
   function normalizeText(text) {
     return text
@@ -14,18 +14,8 @@
       .trim();
   }
 
-  function isTextToxic(text) {
-    if (!text) return false;
-    const t = text.toLowerCase();
-    return TOXIC_KEYWORDS.some(kw => {
-      const re = new RegExp(`\\b${kw.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
-      return re.test(t);
-    });
-  }
-
   function isNodeVisible(node) {
     if (!(node instanceof HTMLElement)) return false;
-
     const style = window.getComputedStyle(node);
     if (
       style.display === 'none' ||
@@ -34,20 +24,19 @@
     ) return false;
 
     const rect = node.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return false;
-    if (rect.bottom < 0 || rect.top > window.innerHeight) return false;
-
-    return true;
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      rect.bottom >= 0 &&
+      rect.top <= window.innerHeight
+    );
   }
 
   function isProbablyUIElement(node) {
     const uiTags = ['BUTTON', 'NAV', 'HEADER', 'FOOTER', 'ASIDE', 'LABEL', 'INPUT', 'SVG'];
     if (uiTags.includes(node.tagName)) return true;
-
     const className = node.className?.toString() || '';
-    if (/nav|menu|footer|header|sidebar|button|icon/i.test(className)) return true;
-
-    return false;
+    return /nav|menu|footer|header|sidebar|button|icon/i.test(className);
   }
 
   function getAllVisibleTextNodes(root = document.body) {
@@ -60,7 +49,7 @@
       const text = node.nodeValue.trim();
 
       if (
-        text.length >= 20 &&                   // Filter out very short text
+        text.length >= 20 &&
         parent &&
         isNodeVisible(parent) &&
         !isProbablyUIElement(parent)
@@ -68,28 +57,57 @@
         textNodes.push({ text, node: parent });
       }
     }
+
     return textNodes;
   }
 
-  function storeTexts(newTextObjs) {
-    if (!newTextObjs?.length) return;
+  async function checkToxicity(text) {
+    try {
+      const response = await fetch(`https://commentanalyzer.googleapis.com/v1alpha1/comments:analyze?key=${PERSPECTIVE_API_KEY}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          comment: { text },
+          languages: ['en'],
+          requestedAttributes: { TOXICITY: {} },
+        }),
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const result = await response.json();
+      const score = result.attributeScores?.TOXICITY?.summaryScore?.value || 0;
+      return score >= 0.8; // Adjust threshold as needed
+    } catch (error) {
+      console.warn('Toxicity check failed:', error);
+      return false;
+    }
+  }
+
+  function highlightToxic(node) {
+    node.style.backgroundColor = 'rgba(255, 0, 0, 0.07)';
+    node.style.color = '#900';
+    node.setAttribute('data-toxic-highlight', 'true');
+  }
+
+  function storeTexts(textObjs) {
+    if (!textObjs?.length) return;
 
     chrome.storage.local.get([TEXT_KEY], (res) => {
       const existing = Array.isArray(res[TEXT_KEY]) ? res[TEXT_KEY] : [];
       const map = new Map();
 
       for (const e of existing) {
-        const key = normalizeText(typeof e === 'string' ? e : e.text);
-        map.set(key, typeof e === 'string' ? { text: e, toxic: isTextToxic(e) } : e);
+        const key = normalizeText(e.text);
+        map.set(key, e);
       }
 
       let added = false;
-      for (const { text } of newTextObjs) {
-        const original = text.trim();
-        const key = normalizeText(original);
+      for (const { text, toxic } of textObjs) {
+        const key = normalizeText(text);
         if (!key || map.has(key)) continue;
 
-        map.set(key, { text: original, toxic: isTextToxic(original) });
+        map.set(key, { text, toxic });
         added = true;
       }
 
@@ -99,32 +117,38 @@
     });
   }
 
-  function highlightIfToxic(node, text) {
-    if (isTextToxic(text)) {
-      node.style.backgroundColor = 'rgba(255, 0, 0, 0.1)';
-      node.style.color = '#800';
-      node.setAttribute('data-toxic-highlight', 'true');
+  async function scanAndStore() {
+    const nodes = getAllVisibleTextNodes();
+    const processed = [];
+
+    for (const { text, node } of nodes) {
+      const key = normalizeText(text);
+      if (!key) continue;
+
+      const toxic = await checkToxicity(text);
+      processed.push({ text, toxic });
+
+      if (toxic) highlightToxic(node);
     }
+
+    storeTexts(processed);
   }
 
-  function scanAndStore() {
-    const textNodes = getAllVisibleTextNodes();
-    storeTexts(textNodes);
-    textNodes.forEach(({ node, text }) => highlightIfToxic(node, text));
+  function debounceScan() {
+    clearTimeout(mutationTimeout);
+    mutationTimeout = setTimeout(() => {
+      scanAndStore();
+    }, DEBOUNCE_TIME);
   }
 
+  // Initial scan
   window.addEventListener('load', () => {
-    setTimeout(() => scanAndStore(), 800);
+    setTimeout(() => scanAndStore(), 1000);
   });
 
-  setTimeout(() => scanAndStore(), 400);
-
-  // Optional: observe changes (e.g. infinite scroll, AJAX-loaded content)
-  const mutationObserver = new MutationObserver(() => {
-    scanAndStore();
-  });
-
-  mutationObserver.observe(document.body, {
+  // Mutation observer for dynamic content
+  const observer = new MutationObserver(debounceScan);
+  observer.observe(document.body, {
     childList: true,
     subtree: true,
   });
