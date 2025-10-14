@@ -1,155 +1,132 @@
 (function () {
-  const SELECTORS = [
-    // Twitter
-    'article div[data-testid="tweetText"]',
-    'div[data-testid="reply"]',
-    // Facebook
-    'div[data-ad-preview="message"]',
-    'div[data-testid="UFI2Comment/body"]',
-    // Reddit
-    'div[data-testid="post-container"]',
-    'div[data-testid="comment"]',
-    // YouTube (comment text)
-    'ytd-comment-renderer #content-text',
-    // Instagram
-    'div.C4VMK > span',
-    'ul.Mr508 li span'
-  ];
+  const TEXT_KEY = 'capturedAllText_v1';
 
-  const TEXT_KEY = 'capturedSocialText_v1';
-
-  // Toxic keywords list
   const TOXIC_KEYWORDS = [
-    'kill', 'die', 'stupid', 'idiot', 'hate', 'bitch', 'asshole', "you're an idiot",
-    'trash', 'worthless', 'faggot', 'nigger'
+    'kill', 'die', 'stupid', 'idiot', 'hate', 'bitch', 'asshole',
+    "you're an idiot", 'trash', 'worthless', 'faggot', 'nigger'
   ];
 
-  // Check if text contains toxic keywords with word boundaries
+  function normalizeText(text) {
+    return text
+      .toLowerCase()
+      .replace(/[^\w\s]/g, '') // Remove punctuation
+      .replace(/\s+/g, ' ')    // Collapse multiple spaces
+      .trim();
+  }
+
   function isTextToxic(text) {
     if (!text) return false;
     const t = text.toLowerCase();
-    for (const kw of TOXIC_KEYWORDS) {
-      // Escape keyword for regex and use word boundaries for exact word match
+    return TOXIC_KEYWORDS.some(kw => {
       const re = new RegExp(`\\b${kw.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
-      if (re.test(t)) return true;
-    }
+      return re.test(t);
+    });
+  }
+
+  function isNodeVisible(node) {
+    if (!(node instanceof HTMLElement)) return false;
+
+    const style = window.getComputedStyle(node);
+    if (
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      parseFloat(style.opacity) < 0.1
+    ) return false;
+
+    const rect = node.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    if (rect.bottom < 0 || rect.top > window.innerHeight) return false;
+
+    return true;
+  }
+
+  function isProbablyUIElement(node) {
+    const uiTags = ['BUTTON', 'NAV', 'HEADER', 'FOOTER', 'ASIDE', 'LABEL', 'INPUT', 'SVG'];
+    if (uiTags.includes(node.tagName)) return true;
+
+    const className = node.className?.toString() || '';
+    if (/nav|menu|footer|header|sidebar|button|icon/i.test(className)) return true;
+
     return false;
   }
 
-  // Safely get text from a DOM node
-  function getTextFromNode(node) {
-    try {
-      return node.innerText || node.textContent || '';
-    } catch (e) {
-      return '';
+  function getAllVisibleTextNodes(root = document.body) {
+    const textNodes = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const parent = node.parentElement;
+      const text = node.nodeValue.trim();
+
+      if (
+        text.length >= 20 &&                   // Filter out very short text
+        parent &&
+        isNodeVisible(parent) &&
+        !isProbablyUIElement(parent)
+      ) {
+        textNodes.push({ text, node: parent });
+      }
     }
+    return textNodes;
   }
 
-  // Store new texts in chrome storage, avoiding duplicates
-  function storeTexts(newTexts) {
-    if (!newTexts || newTexts.length === 0) return;
+  function storeTexts(newTextObjs) {
+    if (!newTextObjs?.length) return;
+
     chrome.storage.local.get([TEXT_KEY], (res) => {
       const existing = Array.isArray(res[TEXT_KEY]) ? res[TEXT_KEY] : [];
       const map = new Map();
+
       for (const e of existing) {
-        if (typeof e === 'string') map.set(e, { text: e, toxic: isTextToxic(e) });
-        else if (e && e.text) map.set(e.text, e);
+        const key = normalizeText(typeof e === 'string' ? e : e.text);
+        map.set(key, typeof e === 'string' ? { text: e, toxic: isTextToxic(e) } : e);
       }
+
       let added = false;
-      for (const t of newTexts) {
-        const s = t.trim();
-        if (!s) continue;
-        if (!map.has(s)) {
-          map.set(s, { text: s, toxic: isTextToxic(s) });
-          added = true;
-        }
+      for (const { text } of newTextObjs) {
+        const original = text.trim();
+        const key = normalizeText(original);
+        if (!key || map.has(key)) continue;
+
+        map.set(key, { text: original, toxic: isTextToxic(original) });
+        added = true;
       }
+
       if (added) {
-        const arr = Array.from(map.values());
-        chrome.storage.local.set({ [TEXT_KEY]: arr });
+        chrome.storage.local.set({ [TEXT_KEY]: Array.from(map.values()) });
       }
     });
   }
 
-  // Highlight node if text is toxic
   function highlightIfToxic(node, text) {
-    try {
-      if (isTextToxic(text)) {
-        node.style.transition = 'background-color 0.2s ease, color 0.2s ease';
-        node.style.backgroundColor = 'rgba(255,0,0,0.12)';
-        node.style.color = '#800';
-        node.setAttribute('data-toxic-highlight', 'true');
-      }
-    } catch (e) {
-      // Ignore styling errors
+    if (isTextToxic(text)) {
+      node.style.backgroundColor = 'rgba(255, 0, 0, 0.1)';
+      node.style.color = '#800';
+      node.setAttribute('data-toxic-highlight', 'true');
     }
   }
 
-  // IntersectionObserver callback: process elements when they come into view
-  function onIntersect(entries, observer) {
-    for (const entry of entries) {
-      if (entry.isIntersecting) {
-        const node = entry.target;
-        const text = getTextFromNode(node);
-        if (text) {
-          storeTexts([text]);
-          highlightIfToxic(node, text);
-          // Stop observing to save resources
-          observer.unobserve(node);
-        }
-      }
-    }
+  function scanAndStore() {
+    const textNodes = getAllVisibleTextNodes();
+    storeTexts(textNodes);
+    textNodes.forEach(({ node, text }) => highlightIfToxic(node, text));
   }
 
-  // Create IntersectionObserver with threshold 0.1 (10%)
-  const observer = new IntersectionObserver(onIntersect, {
-    root: null, // viewport
-    rootMargin: '0px',
-    threshold: 0.1
-  });
-
-  // Find elements matching selectors and start observing them
-  function observeMatchingElements(root = document) {
-    for (const sel of SELECTORS) {
-      try {
-        const nodes = root.querySelectorAll(sel);
-        nodes.forEach((n) => {
-          observer.observe(n);
-        });
-      } catch (e) {
-        // Invalid selector on some pages, ignore
-      }
-    }
-  }
-
-  // Initial scan on page load
   window.addEventListener('load', () => {
-    setTimeout(() => observeMatchingElements(document), 800);
+    setTimeout(() => scanAndStore(), 800);
   });
 
-  // Also run shortly after script injection for SPA or fast-loading pages
-  setTimeout(() => observeMatchingElements(document), 400);
+  setTimeout(() => scanAndStore(), 400);
 
-  // MutationObserver to detect new elements added dynamically and observe them
-  const mutationObserver = new MutationObserver((mutations) => {
-    for (const m of mutations) {
-      if (m.addedNodes && m.addedNodes.length) {
-        m.addedNodes.forEach((node) => {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            // Observe new matching elements inside added node subtree
-            observeMatchingElements(node);
-          }
-        });
-      }
-    }
+  // Optional: observe changes (e.g. infinite scroll, AJAX-loaded content)
+  const mutationObserver = new MutationObserver(() => {
+    scanAndStore();
   });
 
-  try {
-    mutationObserver.observe(document.documentElement || document, {
-      childList: true,
-      subtree: true,
-    });
-  } catch (e) {
-    // Some pages may restrict script access
-  }
+  mutationObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
+
 })();
