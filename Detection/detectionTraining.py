@@ -1,145 +1,102 @@
-import torch
-from torch.utils.data import DataLoader, Dataset
-from transformers import BertTokenizer, BertForSequenceClassification
-from torch.optim import AdamW
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import precision_score, recall_score, f1_score
-from tqdm import tqdm
 import pandas as pd
-
-
-epochs = 15
-
-# Load and preprocess data
-df = pd.read_csv("data.csv")
-df.dropna(subset=['text', 'is_toxic'], inplace=True)
-df['text'] = df['text'].astype(str)
-
-# Normalize labels
-def normalize_label(label):
-    label = str(label).strip().lower()
-    return 1 if label in ['toxic', '1'] else 0
-
-df['label'] = df['is_toxic'].apply(normalize_label)
-
-# Confirm label distribution
-print("Label distribution:\n", df['label'].value_counts())
-
-# Final check for NaNs
-assert df['label'].isna().sum() == 0, "NaNs found in label column after normalization!"
-
-# Split data
-train_texts, val_texts, train_labels, val_labels = train_test_split(
-    df['text'].tolist(), df['label'].tolist(), test_size=0.2, stratify=df['label']
+from datasets import Dataset
+from transformers import (
+    DistilBertTokenizerFast,
+    DistilBertForSequenceClassification,
+    Trainer,
+    TrainingArguments,
 )
 
-# Tokenization
-tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-train_encodings = tokenizer(train_texts, truncation=True, padding=True, max_length=128)
-val_encodings = tokenizer(val_texts, truncation=True, padding=True, max_length=128)
+# ======================
+# 🔹 1. Load & Clean Data
+# ======================
 
-# Dataset class
-class ToxicDataset(Dataset):
-    def __init__(self, encodings, labels):
-        self.encodings = encodings
-        self.labels = labels
-    def __getitem__(self, idx):
-        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
-        item['labels'] = torch.tensor(self.labels[idx])
-        return item
-    def __len__(self):
-        return len(self.labels)
+# Load your CSV (ensure it has "text" and "is_toxic" columns)
+df = pd.read_csv("data.csv")
 
-train_dataset = ToxicDataset(train_encodings, train_labels)
-val_dataset = ToxicDataset(val_encodings, val_labels)
+# Drop empty rows and normalize labels
+df.dropna(subset=["text", "is_toxic"], inplace=True)
+df["label"] = df["is_toxic"].apply(lambda x: 1 if str(x).strip().lower() in ["1", "toxic", "yes"] else 0)
 
-# Model setup
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = BertForSequenceClassification.from_pretrained("bert-base-uncased", num_labels=2)
-model.to(device)
+# Show class distribution
+print("Label distribution:\n", df["label"].value_counts())
 
-train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=16)
-optimizer = AdamW(model.parameters(), lr=5e-5)
+# Reduce to only necessary columns
+df = df[["text", "label"]]
 
-model.train()
-for epoch in range(epochs):
-    total_loss = 0
-    correct = 0
-    total = 0
-    loop = tqdm(train_loader, desc=f"Epoch {epoch+1}")
-    
-    for batch in loop:
-        optimizer.zero_grad()
-        input_ids = batch['input_ids'].to(device)
-        attention_mask = batch['attention_mask'].to(device)
-        labels = batch['labels'].to(device)
-        outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
-        loss = outputs.loss
-        loss.backward()
-        optimizer.step()
+# ===========================
+# 🔹 2. Convert to HF Dataset
+# ===========================
 
-        total_loss += loss.item()
-        preds = torch.argmax(outputs.logits, dim=1)
-        correct += (preds == labels).sum().item()
-        total += labels.size(0)
-        loop.set_postfix(loss=loss.item(), accuracy=correct/total)
+dataset = Dataset.from_pandas(df)
 
-    # Calculate epoch metrics
-    epoch_loss = total_loss
-    epoch_accuracy = correct / total
+# ===========================
+# 🔹 3. Tokenizer & Tokenizing
+# ===========================
 
-    # Evaluate on validation set
-    model.eval()
-    all_preds = []
-    all_labels = []
-    with torch.no_grad():
-        for batch in val_loader:
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].to(device)
-            outputs = model(input_ids, attention_mask=attention_mask)
-            preds = torch.argmax(outputs.logits, dim=1)
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-    model.train()
+tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
 
-    precision = precision_score(all_labels, all_preds)
-    recall = recall_score(all_labels, all_preds)
-    f1 = f1_score(all_labels, all_preds)
-    val_accuracy = sum([p == l for p, l in zip(all_preds, all_labels)]) / len(all_labels)
+def tokenize(batch):
+    return tokenizer(batch["text"], truncation=True, padding="max_length", max_length=128)
 
-    # Print summary
-    print(f"Epoch {epoch+1} Summary — Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.2%}")
-    print(f"Validation Accuracy: {val_accuracy:.2%}, Precision: {precision:.2%}, Recall: {recall:.2%}, F1 Score: {f1:.2%}")
+dataset = dataset.map(tokenize, batched=True)
+dataset.set_format("torch", columns=["input_ids", "attention_mask", "label"])
 
-    # Append to storage.txt
-    with open("storage.txt", "a") as f:
-        f.write(f"Epoch {epoch+1}, Train Loss: {epoch_loss:.4f}, Train Acc: {epoch_accuracy:.4f}, "
-                f"Val Acc: {val_accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}\n")
+# Split into train and validation sets
+train_test = dataset.train_test_split(test_size=0.2)
+train_dataset = train_test["train"]
+val_dataset = train_test["test"]
 
-# Evaluation loop with tqdm
-model.eval()
-all_preds = []
-all_labels = []
-loop = tqdm(val_loader, desc="Evaluating")
-with torch.no_grad():
-    for batch in loop:
-        input_ids = batch['input_ids'].to(device)
-        attention_mask = batch['attention_mask'].to(device)
-        labels = batch['labels'].to(device)
-        outputs = model(input_ids, attention_mask=attention_mask)
-        preds = torch.argmax(outputs.logits, dim=1)
-        all_preds.extend(preds.cpu().numpy())
-        all_labels.extend(labels.cpu().numpy())
+# ========================
+# 🔹 4. Load Model & Config
+# ========================
 
-precision = precision_score(all_labels, all_preds)
-recall = recall_score(all_labels, all_preds)
-f1 = f1_score(all_labels, all_preds)
-accuracy = sum([p == l for p, l in zip(all_preds, all_labels)]) / len(all_labels)
+model = DistilBertForSequenceClassification.from_pretrained(
+    "distilbert-base-uncased",
+    num_labels=2,
+)
 
-print(f"Validation Accuracy: {accuracy:.2%}")
-print(f"Precision: {precision:.2%}, Recall: {recall:.2%}, F1 Score: {f1:.2%}")
+# Optional: Name your labels for readability
+model.config.id2label = {0: "non-toxic", 1: "toxic"}
+model.config.label2id = {"non-toxic": 0, "toxic": 1}
 
-# Save model
-torch.save(model.state_dict(), "toxicClassifier.pt")
+# ========================
+# 🔹 5. Define Trainer Setup
+# ========================
+
+training_args = TrainingArguments(
+    output_dir="./light-toxic-model",     # 💾 Output folder
+    evaluation_strategy="epoch",
+    save_strategy="epoch",
+    learning_rate=5e-5,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
+    num_train_epochs=4,
+    weight_decay=0.01,
+    logging_dir="./logs",
+    logging_steps=10,
+    load_best_model_at_end=True,
+    save_total_limit=1,
+)
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_dataset,
+    eval_dataset=val_dataset,
+)
+
+# ====================
+# 🔹 6. Train the Model
+# ====================
+
+trainer.train()
+
+# ======================
+# 🔹 7. Save Final Model
+# ======================
+
+trainer.save_model("./light-toxic-model")
+tokenizer.save_pretrained("./light-toxic-model")
+
+print("\n✅ Model and tokenizer saved to ./light-toxic-model")
